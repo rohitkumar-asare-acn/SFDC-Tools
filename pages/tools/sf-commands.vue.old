@@ -1,0 +1,412 @@
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted } from "vue";
+import CopyIcon from '../../components/icons/CopyIcon.vue';
+import ResetIcon from '../../components/icons/ResetIcon.vue';
+import { Codemirror } from 'vue-codemirror';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView } from 'codemirror';
+import { storageManager, type Environment } from '../../utils/storageManager';
+
+useSeoMeta({
+    title: 'SF CLI Commands Cheat Sheet',
+    ogTitle: 'SF CLI Commands Cheat Sheet',
+    description: 'SF CLI Commands Cheat Sheet provides quick access to common Salesforce CLI commands.',
+    ogDescription: 'SF CLI Commands Cheat Sheet provides quick access to common Salesforce CLI commands.',
+});
+
+// Codemirror setup
+const extensions = [oneDark, EditorView.lineWrapping];
+const view = shallowRef();
+const handleReady = (payload: any) => {
+    view.value = payload.view;
+};
+
+// State management
+const environments = ref<Environment[]>([]);
+const showEnvModal = ref(false);
+const envFormState = reactive({
+    name: '',
+    alias: '',
+    editingId: null as string | null
+});
+
+// Environment variables management
+const testClassesInput = ref("");
+const selectedEnv = ref("");
+const deployValidateOutput = ref("");
+const apexTestOutput = ref("");
+
+onMounted(() => {
+    loadEnvironments();
+});
+
+const loadEnvironments = () => {
+    environments.value = storageManager.getEnvironments();
+};
+
+const openEnvModal = (env?: Environment) => {
+    if (env) {
+        envFormState.name = env.name;
+        envFormState.alias = env.alias;
+        envFormState.editingId = env.id;
+    } else {
+        envFormState.name = '';
+        envFormState.alias = '';
+        envFormState.editingId = null;
+    }
+    showEnvModal.value = true;
+};
+
+const closeEnvModal = () => {
+    showEnvModal.value = false;
+    envFormState.name = '';
+    envFormState.alias = '';
+    envFormState.editingId = null;
+};
+
+const saveEnvironment = () => {
+    if (!envFormState.name.trim() || !envFormState.alias.trim()) {
+        alert('Please fill in all fields');
+        return;
+    }
+
+    if (envFormState.editingId) {
+        storageManager.updateEnvironment(
+            envFormState.editingId,
+            envFormState.name,
+            envFormState.alias
+        );
+    } else {
+        storageManager.addEnvironment(envFormState.name, envFormState.alias);
+    }
+
+    loadEnvironments();
+    closeEnvModal();
+};
+
+const deleteEnvironment = (id: string) => {
+    if (confirm('Are you sure you want to delete this environment?')) {
+        storageManager.deleteEnvironment(id);
+        if (selectedEnv.value === id) {
+            selectedEnv.value = '';
+        }
+        loadEnvironments();
+    }
+};
+
+// Command builders
+const transformTestClasses = (input: string): string[] => {
+    return input
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .map(className => `--tests "${className}"`);
+};
+
+const buildDeployValidateCommand = () => {
+    if (!selectedEnv.value) {
+        alert('Please select an environment');
+        return;
+    }
+
+    if (!testClassesInput.value.trim()) {
+        alert('Please enter at least one test class');
+        return;
+    }
+
+    const testClassesArray = transformTestClasses(testClassesInput.value);
+    const testClassesStr = testClassesArray.join(' ');
+    const selectedEnvAlias = environments.value.find(e => e.id === selectedEnv.value)?.alias || selectedEnv.value;
+
+    deployValidateOutput.value = `sf project deploy validate --manifest manifest/package.xml --target-org ${selectedEnvAlias} --test-level RunSpecifiedTests ${testClassesStr}`;
+};
+
+const buildApexRunTest = () => {
+    if (!testClassesInput.value.trim()) {
+        alert('Please enter at least one test class');
+        return;
+    }
+
+    const testClasses = testClassesInput.value
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .map(className => `--class-names "${className}"`)
+        .join(' ');
+
+    apexTestOutput.value = `sf apex run test ${testClasses} --result-format human --synchronous`;
+};
+
+const copyToClipboard = async (text: string, showToast = true) => {
+    try {
+        await navigator.clipboard.writeText(text);
+        if (showToast) {
+            // You can integrate with your toast system here
+            console.log('Copied to clipboard!');
+        }
+    } catch (err) {
+        console.error('Failed to copy:', err);
+    }
+};
+
+const staticCommand = ref("sf code-analyzer run --rule-selector pmd --output-file pmd_results.html");
+
+const clearTestClasses = () => {
+    testClassesInput.value = '';
+    deployValidateOutput.value = '';
+    apexTestOutput.value = '';
+};
+</script>
+
+<template>
+    <div class="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
+        <!-- Header -->
+        <div class="mb-8">
+            <PageTitle class="text-3xl font-bold mb-2">SF CLI Commands Cheat Sheet</PageTitle>
+            <InputLabel class="text-base font-light text-gray-600 dark:text-gray-300">
+                Salesforce CLI Commands to Validate Package.xml / Run Tests with Environment Management
+            </InputLabel>
+        </div>
+
+        <!-- Environment Variables Section -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Environment Variables</h2>
+                <button
+                    @click="openEnvModal()"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors duration-200 font-medium"
+                >
+                    + Add Environment
+                </button>
+            </div>
+
+            <div v-if="environments.length === 0" class="text-gray-500 dark:text-gray-400 py-6">
+                No environments configured yet. Add one to get started.
+            </div>
+
+            <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div
+                    v-for="env in environments"
+                    :key="env.id"
+                    class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg border border-gray-200 dark:border-gray-600"
+                >
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <p class="font-semibold text-gray-900 dark:text-white">{{ env.name }}</p>
+                            <p class="text-sm text-gray-600 dark:text-gray-400 font-mono">{{ env.alias }}</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button
+                            @click="openEnvModal(env)"
+                            class="flex-1 px-3 py-1 text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-900 dark:text-white rounded transition-colors duration-200"
+                        >
+                            Edit
+                        </button>
+                        <button
+                            @click="deleteEnvironment(env.id)"
+                            class="flex-1 px-3 py-1 text-sm bg-red-100 dark:bg-red-900 hover:bg-red-200 dark:hover:bg-red-800 text-red-700 dark:text-red-200 rounded transition-colors duration-200"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Static Command Section -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Code Analyzer Command</h2>
+            <div class="bg-gray-900 dark:bg-gray-950 text-green-400 p-4 rounded font-mono text-sm overflow-x-auto mb-4">
+                {{ staticCommand }}
+            </div>
+            <button
+                @click="copyToClipboard(staticCommand, true)"
+                class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-200 font-medium flex items-center gap-2"
+            >
+                <CopyIcon class="w-4 h-4" />
+                Copy Command
+            </button>
+        </div>
+
+        <!-- Deploy Validate Command Builder -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">SF Project Deploy Validate</h2>
+
+            <!-- Environment Selector -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Target Environment
+                </label>
+                <select
+                    v-model="selectedEnv"
+                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    <option value="">-- Select Environment --</option>
+                    <option v-for="env in environments" :key="env.id" :value="env.id">
+                        {{ env.name }} ({{ env.alias }})
+                    </option>
+                </select>
+            </div>
+
+            <!-- Test Classes Input -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Test Classes (one per line)
+                </label>
+                <codemirror
+                    v-model="testClassesInput"
+                    placeholder="BMV_TestClass1Test&#10;BMV_TestClass2Test&#10;MyTestClass"
+                    :style="{ height: '150px', borderRadius: '5px', overflow: 'hidden' }"
+                    :autofocus="false"
+                    :indent-with-tab="true"
+                    :tab-size="2"
+                    :extensions="extensions"
+                    @ready="handleReady"
+                />
+            </div>
+
+            <!-- Output Command -->
+            <div v-if="deployValidateOutput" class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Generated Command
+                </label>
+                <div class="bg-gray-900 dark:bg-gray-950 text-green-400 p-4 rounded font-mono text-sm overflow-x-auto break-words whitespace-pre-wrap">
+                    {{ deployValidateOutput }}
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+                <button
+                    @click="buildDeployValidateCommand"
+                    class="flex-1 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors duration-200 font-medium"
+                >
+                    Build Command
+                </button>
+                <button
+                    @click="copyToClipboard(deployValidateOutput, true)"
+                    :disabled="!deployValidateOutput"
+                    class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-200 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                    <CopyIcon class="w-4 h-4" />
+                    Copy
+                </button>
+                <button
+                    @click="clearTestClasses"
+                    class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors duration-200 font-medium flex items-center gap-2"
+                >
+                    <ResetIcon class="w-4 h-4" />
+                    Clear
+                </button>
+            </div>
+        </div>
+
+        <!-- Apex Run Test Command Builder -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">SF Apex Run Test</h2>
+
+            <!-- Test Classes Input -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Test Classes (one per line)
+                </label>
+                <codemirror
+                    v-model="testClassesInput"
+                    placeholder="MyClassTest&#10;MyOtherClassTest"
+                    :style="{ height: '150px', borderRadius: '5px', overflow: 'hidden' }"
+                    :autofocus="false"
+                    :indent-with-tab="true"
+                    :tab-size="2"
+                    :extensions="extensions"
+                    @ready="handleReady"
+                />
+            </div>
+
+            <!-- Output Command -->
+            <div v-if="apexTestOutput" class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Generated Command
+                </label>
+                <div class="bg-gray-900 dark:bg-gray-950 text-green-400 p-4 rounded font-mono text-sm overflow-x-auto break-words whitespace-pre-wrap">
+                    {{ apexTestOutput }}
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+                <button
+                    @click="buildApexRunTest"
+                    class="flex-1 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors duration-200 font-medium"
+                >
+                    Build Command
+                </button>
+                <button
+                    @click="copyToClipboard(apexTestOutput, true)"
+                    :disabled="!apexTestOutput"
+                    class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-200 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                    <CopyIcon class="w-4 h-4" />
+                    Copy
+                </button>
+                <button
+                    @click="clearTestClasses"
+                    class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors duration-200 font-medium flex items-center gap-2"
+                >
+                    <ResetIcon class="w-4 h-4" />
+                    Clear
+                </button>
+            </div>
+        </div>
+
+        <!-- Environment Modal -->
+        <div v-if="showEnvModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 w-full max-w-md">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                    {{ envFormState.editingId ? 'Edit Environment' : 'Add Environment' }}
+                </h3>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Environment Name
+                        </label>
+                        <input
+                            v-model="envFormState.name"
+                            type="text"
+                            placeholder="e.g., Development Org"
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Environment Alias
+                        </label>
+                        <input
+                            v-model="envFormState.alias"
+                            type="text"
+                            placeholder="e.g., nibs_dev"
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                    <button
+                        @click="saveEnvironment"
+                        class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors duration-200 font-medium"
+                    >
+                        Save
+                    </button>
+                    <button
+                        @click="closeEnvModal"
+                        class="flex-1 px-4 py-2 bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500 text-gray-900 dark:text-white rounded-md transition-colors duration-200 font-medium"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
